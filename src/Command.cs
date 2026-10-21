@@ -8,6 +8,7 @@ namespace CleanSlate
     {
         Start,        // no arguments: just run in the tray
         Click,        // --click: the left-click action
+        CloseExceptCurrent, // --close-except-current [screen]
         CloseGray,    // --close-gray [screen]
         CloseOnly,    // --close-only
         GrayOnly,     // --gray-only [screen]
@@ -30,6 +31,8 @@ namespace CleanSlate
             "Left-click its icon for your chosen action, right-click it for everything else.\n\n" +
             "CleanSlate.exe                       start it in the tray\n" +
             "CleanSlate.exe --click               do the left-click action (removes the gray if it is on)\n" +
+            "CleanSlate.exe --close-except-current [screen]\n" +
+            "                                     close all windows except the current one, gray every screen except [screen]\n" +
             "CleanSlate.exe --close-gray [screen] close all windows, gray every screen except [screen]\n" +
             "CleanSlate.exe --close-only          close all windows\n" +
             "CleanSlate.exe --gray-only [screen]  gray every screen except [screen]\n" +
@@ -53,6 +56,7 @@ namespace CleanSlate
                 switch (arg.ToLowerInvariant())
                 {
                     case "--click": c.Kind = CommandKind.Click; break;
+                    case "--close-except-current": c.Kind = CommandKind.CloseExceptCurrent; c.Screen = OptionalScreen(args, ref i); break;
                     case "--close-gray": c.Kind = CommandKind.CloseGray; c.Screen = OptionalScreen(args, ref i); break;
                     case "--close-only": c.Kind = CommandKind.CloseOnly; break;
                     case "--gray-only": c.Kind = CommandKind.GrayOnly; c.Screen = OptionalScreen(args, ref i); break;
@@ -94,13 +98,14 @@ namespace CleanSlate
             switch (Kind)
             {
                 case CommandKind.Click: a.Add("--click"); break;
+                case CommandKind.CloseExceptCurrent: a.Add("--close-except-current"); break;
                 case CommandKind.CloseGray: a.Add("--close-gray"); break;
                 case CommandKind.CloseOnly: a.Add("--close-only"); break;
                 case CommandKind.GrayOnly: a.Add("--gray-only"); break;
                 case CommandKind.Remove: a.Add("--remove"); break;
                 case CommandKind.Exit: a.Add("--exit"); break;
             }
-            if (Screen != null && (Kind == CommandKind.CloseGray || Kind == CommandKind.GrayOnly)) a.Add(Screen);
+            if (Screen != null && (Kind == CommandKind.CloseExceptCurrent || Kind == CommandKind.CloseGray || Kind == CommandKind.GrayOnly)) a.Add(Screen);
             if (DryRun) a.Add("--dry-run");
             if (OnlyPid != 0) { a.Add("--only-pid"); a.Add(OnlyPid.ToString(CultureInfo.InvariantCulture)); }
             a.Add("--remote");

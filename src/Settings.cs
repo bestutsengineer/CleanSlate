@@ -8,9 +8,15 @@ namespace CleanSlate
     internal sealed class Settings
     {
         // Left-click actions
+        public const string CloseExceptCurrent = "close-except-current";
         public const string CloseGray = "close-gray";
         public const string CloseOnly = "close-only";
         public const string GrayOnly = "gray-only";
+
+        // Do not disturb while the gray is on
+        public const string DndTurnOn = "on";            // switch it on (unless already on), switch it back off after
+        public const string DndKeepOff = "keep-off";     // pause Windows' automatic rules while the gray is on
+        public const string DndLeave = "windows";        // never touch it
 
         // Focus screen kinds
         public const string Primary = "primary";
@@ -37,8 +43,8 @@ namespace CleanSlate
         /// <summary>Color of the gray screens as #RRGGBB.</summary>
         public string GrayColor = "#808080";
 
-        /// <summary>Turn on Windows "Do not disturb" while the gray is on.</summary>
-        public bool DoNotDisturb;
+        /// <summary>What happens to Windows "Do not disturb" while the gray is on: on | keep-off | windows.</summary>
+        public string DoNotDisturb = DndLeave;
 
         /// <summary>Write a log to %LOCALAPPDATA%\CleanSlate\log.txt (off by default).</summary>
         public bool Logging;
@@ -77,7 +83,7 @@ namespace CleanSlate
                         case "focusdisplayid": s.FocusDisplayId = value; break;
                         case "focusdisplayname": s.FocusDisplayName = value; break;
                         case "graycolor": if (ParseColor(value) >= 0) s.GrayColor = value; break;
-                        case "donotdisturb": s.DoNotDisturb = IsOn(value); break;
+                        case "donotdisturb": s.DoNotDisturb = NormalizeDnd(value); break;
                         case "logging": s.Logging = IsOn(value); break;
                         case "dndrestore": s.DndRestore = value; break;
                     }
@@ -99,7 +105,7 @@ namespace CleanSlate
                 {
                     "# CleanSlate settings (everything here can also be changed from the tray icon's menu)",
                     "",
-                    "# What a left click on the tray icon does: close-gray | close-only | gray-only",
+                    "# What a left click on the tray icon does: close-except-current | close-gray | close-only | gray-only",
                     "ClickAction=" + ClickAction,
                     "",
                     "# The screen that stays visible:",
@@ -113,8 +119,11 @@ namespace CleanSlate
                     "# Color of the gray screens, as #RRGGBB",
                     "GrayColor=" + GrayColor,
                     "",
-                    "# Turn on Windows Do not disturb while the gray is on: on | off",
-                    "DoNotDisturb=" + (DoNotDisturb ? "on" : "off"),
+                    "# Windows Do not disturb while the gray is on:",
+                    "#   on        turn it on (if it is not on already) and back off afterwards",
+                    "#   keep-off  keep notifications on: pause Windows' automatic rules while the gray is on",
+                    "#   windows   leave it to Windows (default)",
+                    "DoNotDisturb=" + DoNotDisturb,
                     "",
                     "# Keep a log of what was closed, moved or skipped (%LOCALAPPDATA%\\CleanSlate\\log.txt): on | off",
                     "Logging=" + (Logging ? "on" : "off"),
@@ -139,7 +148,16 @@ namespace CleanSlate
         public static string NormalizeAction(string value)
         {
             string v = (value ?? "").Trim().ToLowerInvariant();
-            return v == CloseGray || v == CloseOnly || v == GrayOnly ? v : null;
+            return v == CloseExceptCurrent || v == CloseGray || v == CloseOnly || v == GrayOnly ? v : null;
+        }
+
+        /// <summary>Version 1.0 stored on/off; its "off" meant "leave it to Windows", so it still does.</summary>
+        static string NormalizeDnd(string value)
+        {
+            string v = (value ?? "").Trim().ToLowerInvariant();
+            if (IsOn(v)) return DndTurnOn;
+            if (v == DndKeepOff || v == "keepoff") return DndKeepOff;
+            return DndLeave;
         }
 
         static string NormalizeFocus(string value)
@@ -171,9 +189,19 @@ namespace CleanSlate
 
         public static string ActionText(string action)
         {
+            if (action == CloseExceptCurrent) return "Close all except the current window + gray other screens";
             if (action == CloseOnly) return "Close all windows only";
             if (action == GrayOnly) return "Gray other screens only";
             return "Close all windows + gray other screens";
+        }
+
+        /// <summary>Short form for the tray tooltip (Windows cuts tooltips at 63 characters).</summary>
+        public static string ActionShort(string action)
+        {
+            if (action == CloseExceptCurrent) return "close all but the current window + gray";
+            if (action == CloseOnly) return "close all windows";
+            if (action == GrayOnly) return "gray other screens";
+            return "close all windows + gray";
         }
     }
 }

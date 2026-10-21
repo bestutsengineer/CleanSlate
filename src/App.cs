@@ -21,12 +21,17 @@ namespace CleanSlate
         // Stop fighting a window that keeps moving itself back.
         const int MaxMovesPerWindow = 5;
 
+        // "Keep it off": how often to pause an automatic Do not disturb rule, and when to give up.
+        const int DismissIntervalMs = 10000;
+        const int MaxDismissAttempts = 3;
+
         // Menu ids
-        const int IdCloseGray = 1, IdCloseOnly = 2, IdGrayOnly = 3, IdRemove = 4;
+        const int IdCloseExceptCurrent = 5, IdCloseGray = 1, IdCloseOnly = 2, IdGrayOnly = 3, IdRemove = 4;
         const int IdFocusPrimary = 100, IdFocusActive = 101, IdFocusMissing = 102, IdFocusDisplay = 110;   // 110 + screen index
-        const int IdClickCloseGray = 201, IdClickCloseOnly = 202, IdClickGrayOnly = 203;
+        const int IdClickCloseExceptCurrent = 204, IdClickCloseGray = 201, IdClickCloseOnly = 202, IdClickGrayOnly = 203;
         const int IdShade = 301, IdCustomColor = 350;                // 301 + shade index
-        const int IdStartup = 401, IdOpenLog = 402, IdDoNotDisturb = 403, IdLogging = 404, IdExit = 500;
+        const int IdStartup = 401, IdOpenLog = 402, IdLogging = 404, IdExit = 500;
+        const int IdDndOn = 451, IdDndKeepOff = 452, IdDndLeave = 453;
 
         sealed class MoveRecord
         {
@@ -58,6 +63,8 @@ namespace CleanSlate
         bool _accepting = true;
         bool _menuOpen;
         bool _busy;
+        DateTime _lastDismiss = DateTime.MinValue;
+        int _dismissAttempts;
 
         public App()
         {
@@ -102,8 +109,11 @@ namespace CleanSlate
                 case CommandKind.Click:
                     DoClickAction(c);
                     break;
+                case CommandKind.CloseExceptCurrent:
+                    CloseAndGray(c, true);
+                    break;
                 case CommandKind.CloseGray:
-                    CloseAndGray(c);
+                    CloseAndGray(c, false);
                     break;
                 case CommandKind.CloseOnly:
                     CloseWindows(c);
@@ -153,7 +163,16 @@ namespace CleanSlate
             Settings s = Settings.Load();
             if (s.ClickAction == Settings.CloseOnly) CloseWindows(c);
             else if (s.ClickAction == Settings.GrayOnly) GrayOnly(c);
-            else CloseAndGray(c);
+            else CloseAndGray(c, s.ClickAction == Settings.CloseExceptCurrent);
+        }
+
+        /// <summary>
+        /// The window you were working in before clicking the tray icon (the taskbar takes focus on the click),
+        /// or IntPtr.Zero if there is none any more.
+        /// </summary>
+        IntPtr CurrentWindow()
+        {
+            return _lastActive != IntPtr.Zero && Native.IsWindow(_lastActive) && WindowOps.IsTaskbarWindow(_lastActive) ? _lastActive : IntPtr.Zero;
         }
 
         /// <summary>The screen given on the command line, or else the focus screen chosen in the menu.</summary>
@@ -164,12 +183,20 @@ namespace CleanSlate
             return Screens.Resolve(s.FocusScreen, s.FocusDisplayId, s.FocusDisplayName, screens, _lastActive);
         }
 
-        void CloseAndGray(Command c)
+        /// <param name="keepCurrent">Leave the window you were working in open. If it is on a gray screen,
+        /// it is moved to the focus screen like any other window there.</param>
+        void CloseAndGray(Command c, bool keepCurrent)
         {
             List<ScreenInfo> screens = Screens.GetAll();
             ScreenInfo focus = ResolveFocus(c, screens);
             // Snapshot the windows first so our own new windows can never be part of it.
             List<IntPtr> windows = WindowOps.TaskbarWindows(c.OnlyPid);
+            if (keepCurrent)
+            {
+                IntPtr current = CurrentWindow();
+                if (current != IntPtr.Zero && windows.Remove(current)) Log.Write("keeping the current window: {0}", WindowOps.Describe(current));
+                else if (current == IntPtr.Zero) Log.Write("no current window found; closing all windows");
+            }
             if (screens.Count > 1)
             {
                 _parked.Clear();
@@ -246,7 +273,12 @@ namespace CleanSlate
             _pendingStamp = null;
             StartTimer();
             Log.Write("gray on {0}; focus on {1}", string.Join(", ", grayed.ToArray()), focus.Label);
-            if (turningOn && Settings.Load().DoNotDisturb) TurnOnDoNotDisturb();
+            if (turningOn)
+            {
+                _dismissAttempts = 0;
+                _lastDismiss = DateTime.MinValue;
+                ApplyDoNotDisturb(true);
+            }
         }
 
         void ParkWindowsOnGray(List<ScreenInfo> screens)
@@ -277,20 +309,36 @@ namespace CleanSlate
         // ---------------------------------------------------------------- do not disturb
 
         /// <summary>
-        /// Turns Do not disturb on, but only if notifications are not already muted (by you or by an
-        /// automatic rule), and remembers what to put back.
+        /// Applies the Do not disturb choice while the gray is on. Runs when the gray goes on and on every tick,
+        /// so "keep it off" also catches a rule that kicks in later (for example a video going full screen).
         /// </summary>
-        void TurnOnDoNotDisturb()
+        void ApplyDoNotDisturb(bool grayJustOn)
+        {
+            if (!GrayActive || !DoNotDisturb.Available) return;
+            Settings s = Settings.Load();
+            if (s.DoNotDisturb == Settings.DndLeave) return;
+            if (s.DoNotDisturb == Settings.DndTurnOn && !grayJustOn) return;
+            bool inEffect = DoNotDisturb.IsInEffect();
+            if (s.DoNotDisturb == Settings.DndKeepOff && !inEffect) return;   // the common case: nothing muted
+            string selected = DoNotDisturb.GetSelected();
+            switch (DoNotDisturb.Decide(s.DoNotDisturb, grayJustOn, inEffect, selected, s.DndRestore.Length > 0))
+            {
+                case DoNotDisturb.Step.TurnOn:
+                    SwitchDoNotDisturbOn(selected);
+                    break;
+                case DoNotDisturb.Step.Dismiss:
+                    PauseAutomaticRule();
+                    break;
+                default:
+                    if (grayJustOn && inEffect && s.DoNotDisturb == Settings.DndTurnOn) Log.Write("do not disturb is already on; leaving it as it is");
+                    break;
+            }
+        }
+
+        /// <summary>"Turn it on": switches Do not disturb on and remembers what to put back afterwards.</summary>
+        void SwitchDoNotDisturbOn(string previous)
         {
             Settings s = Settings.Load();
-            if (s.DndRestore.Length > 0 || !DoNotDisturb.Available) return;
-            if (DoNotDisturb.IsInEffect())
-            {
-                Log.Write("do not disturb is already on; leaving it as it is");
-                return;
-            }
-            string previous = DoNotDisturb.GetSelected();
-            if (previous == null) return;
             // Save first, so a crash right after still leaves a note to undo it on the next start.
             s.DndRestore = previous;
             s.Save();
@@ -303,6 +351,44 @@ namespace CleanSlate
                 s.DndRestore = "";
                 s.Save();
             }
+        }
+
+        /// <summary>
+        /// "Keep it off": an automatic rule (full-screen app, game, schedule...) muted notifications while the
+        /// gray is on. Switch Do not disturb on and, a moment later, off again: that is what switching it off in
+        /// the notification center does, and Windows then pauses the rule until its condition ends (you leave
+        /// full screen, the game closes) or its next scheduled start. No Windows setting is changed.
+        /// </summary>
+        void PauseAutomaticRule()
+        {
+            if (_dismissAttempts >= MaxDismissAttempts || (DateTime.UtcNow - _lastDismiss).TotalMilliseconds < DismissIntervalMs) return;
+            _dismissAttempts++;
+            _lastDismiss = DateTime.UtcNow;
+            string reason = DoNotDisturb.FullScreenAppOpen() ? "a full-screen app" : "an automatic rule";
+
+            // The "off" step reuses the restore note, so it also happens after a crash (on the next start),
+            // when the gray goes off, or when CleanSlate exits.
+            Settings s = Settings.Load();
+            s.DndRestore = DoNotDisturb.OffProfile;
+            s.Save();
+            if (!DoNotDisturb.SetSelected(DoNotDisturb.OnProfile))
+            {
+                s.DndRestore = "";
+                s.Save();
+                return;
+            }
+            int attempt = _dismissAttempts;
+            System.Windows.Forms.Timer second = new System.Windows.Forms.Timer();
+            second.Interval = 1000;
+            second.Tick += delegate
+            {
+                second.Stop();
+                second.Dispose();
+                RestoreDoNotDisturb();
+                Log.Write("do not disturb kept off: paused {0} (attempt {1} of {2})", reason, attempt, MaxDismissAttempts);
+                if (attempt >= MaxDismissAttempts) Log.Write("do not disturb: giving up for this gray session if Windows turns it back on again");
+            };
+            second.Start();
         }
 
         /// <summary>Puts Do not disturb back, if CleanSlate turned it on and you have not changed it since.</summary>
@@ -323,15 +409,18 @@ namespace CleanSlate
             s.Save();
         }
 
-        void ToggleDoNotDisturb()
+        void SetDoNotDisturbMode(string mode)
         {
             Settings s = Settings.Load();
-            s.DoNotDisturb = !s.DoNotDisturb;
+            s.DoNotDisturb = mode;
             s.Save();
-            Log.Write("do not disturb while gray is on: {0}", s.DoNotDisturb ? "on" : "off");
+            Log.Write("do not disturb while gray is on: {0}", mode);
             if (!GrayActive) return;
-            if (s.DoNotDisturb) TurnOnDoNotDisturb();
-            else RestoreDoNotDisturb();
+            // Takes effect right away while the gray is on.
+            if (mode != Settings.DndTurnOn) RestoreDoNotDisturb();
+            _dismissAttempts = 0;
+            _lastDismiss = DateTime.MinValue;
+            ApplyDoNotDisturb(mode == Settings.DndTurnOn);
         }
 
         public void RequestRemoveGray(string reason)
@@ -427,7 +516,11 @@ namespace CleanSlate
                 }
                 foreach (OverlayWindow o in _overlays) o.Place();
                 if (!_dryRun) MoveStragglers(screens);
-                if (checkLayout) Prune();
+                if (checkLayout)
+                {
+                    Prune();
+                    ApplyDoNotDisturb(false);
+                }
             }
             catch (Exception ex)
             {
@@ -534,6 +627,10 @@ namespace CleanSlate
                 using (PopupMenu menu = new PopupMenu())
                 {
                     // Actions. The bold one is what a left click on the icon does.
+                    // The window that stays open is shown on the right, like a shortcut hint.
+                    IntPtr current = CurrentWindow();
+                    string keeps = current != IntPtr.Zero ? "\t" + WindowOps.AppName(current).Replace("&", "&&") : "";
+                    menu.Item(IdCloseExceptCurrent, Settings.ActionText(Settings.CloseExceptCurrent) + keeps, true, !GrayActive && s.ClickAction == Settings.CloseExceptCurrent);
                     menu.Item(IdCloseGray, Settings.ActionText(Settings.CloseGray), multi, !GrayActive && s.ClickAction == Settings.CloseGray);
                     menu.Item(IdCloseOnly, Settings.ActionText(Settings.CloseOnly), true, !GrayActive && s.ClickAction == Settings.CloseOnly);
                     menu.Item(IdGrayOnly, Settings.ActionText(Settings.GrayOnly), multi, !GrayActive && s.ClickAction == Settings.GrayOnly);
@@ -551,6 +648,7 @@ namespace CleanSlate
                         focus.Item(IdFocusMissing, s.FocusDisplayName + " (not connected: using the primary display)", false, false, true, true);
 
                     PopupMenu click = menu.Submenu("Left-click action");
+                    click.Item(IdClickCloseExceptCurrent, Settings.ActionText(Settings.CloseExceptCurrent), true, false, s.ClickAction == Settings.CloseExceptCurrent, true);
                     click.Item(IdClickCloseGray, Settings.ActionText(Settings.CloseGray), true, false, s.ClickAction == Settings.CloseGray, true);
                     click.Item(IdClickCloseOnly, Settings.ActionText(Settings.CloseOnly), true, false, s.ClickAction == Settings.CloseOnly, true);
                     click.Item(IdClickGrayOnly, Settings.ActionText(Settings.GrayOnly), true, false, s.ClickAction == Settings.GrayOnly, true);
@@ -565,7 +663,10 @@ namespace CleanSlate
                     }
                     color.Item(IdCustomColor, preset ? "Custom..." : "Custom (" + s.GrayColor + ")...", true, false, !preset, true);
 
-                    menu.Item(IdDoNotDisturb, DoNotDisturbText(s), DoNotDisturb.Available, false, DoNotDisturb.Available && s.DoNotDisturb);
+                    PopupMenu dnd = menu.Submenu(DoNotDisturbText(s), DoNotDisturb.Available);
+                    dnd.Item(IdDndOn, "Turn it on", true, false, s.DoNotDisturb == Settings.DndTurnOn, true);
+                    dnd.Item(IdDndKeepOff, "Keep it off (pause Windows' automatic rules)", true, false, s.DoNotDisturb == Settings.DndKeepOff, true);
+                    dnd.Item(IdDndLeave, "Leave it to Windows", true, false, s.DoNotDisturb == Settings.DndLeave, true);
 
                     menu.Separator();
                     menu.Item(IdStartup, "Start with Windows", true, false, AutoStart.IsEnabled);
@@ -589,13 +690,17 @@ namespace CleanSlate
             Settings s = Settings.Load();
             switch (id)
             {
+                case IdCloseExceptCurrent: Execute(new Command { Kind = CommandKind.CloseExceptCurrent }); return;
                 case IdCloseGray: Execute(new Command { Kind = CommandKind.CloseGray }); return;
                 case IdCloseOnly: Execute(new Command { Kind = CommandKind.CloseOnly }); return;
                 case IdGrayOnly: Execute(new Command { Kind = CommandKind.GrayOnly }); return;
                 case IdRemove: Execute(new Command { Kind = CommandKind.Remove }); return;
                 case IdFocusPrimary: SetFocusScreen(Settings.Primary, null); return;
                 case IdFocusActive: SetFocusScreen(Settings.Active, null); return;
-                case IdDoNotDisturb: ToggleDoNotDisturb(); UpdateTray(); return;
+                case IdDndOn: SetDoNotDisturbMode(Settings.DndTurnOn); UpdateTray(); return;
+                case IdDndKeepOff: SetDoNotDisturbMode(Settings.DndKeepOff); UpdateTray(); return;
+                case IdDndLeave: SetDoNotDisturbMode(Settings.DndLeave); UpdateTray(); return;
+                case IdClickCloseExceptCurrent: s.ClickAction = Settings.CloseExceptCurrent; break;
                 case IdClickCloseGray: s.ClickAction = Settings.CloseGray; break;
                 case IdClickCloseOnly: s.ClickAction = Settings.CloseOnly; break;
                 case IdClickGrayOnly: s.ClickAction = Settings.GrayOnly; break;
@@ -664,7 +769,7 @@ namespace CleanSlate
         void UpdateTray()
         {
             Settings s = Settings.Load();
-            string tip = !GrayActive ? "CleanSlate: click to " + Settings.ActionText(s.ClickAction).ToLowerInvariant()
+            string tip = !GrayActive ? "CleanSlate: click to " + Settings.ActionShort(s.ClickAction)
                 : s.DndRestore.Length > 0 ? "CleanSlate: gray and do not disturb are on. Click to undo."
                 : "CleanSlate: gray is on. Click to remove it.";
             _tray.Update(GrayActive, tip);

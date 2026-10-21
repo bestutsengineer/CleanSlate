@@ -13,6 +13,30 @@ namespace CleanSlate
         /// <summary>The profile the Windows 11 "Do not disturb" switch selects.</summary>
         public const string OnProfile = "Microsoft.QuietHoursProfile.PriorityOnly";
 
+        /// <summary>The switch in its "off" position; automatic rules can still mute notifications.</summary>
+        public const string OffProfile = "Microsoft.QuietHoursProfile.Unrestricted";
+
+        public enum Step { None, TurnOn, Dismiss }
+
+        /// <summary>
+        /// What CleanSlate should do about Do not disturb while the gray is on. Pure, so it can be tested.
+        ///   mode       Settings.DndTurnOn / DndKeepOff / DndLeave
+        ///   grayJustOn the gray has just been switched on (the "turn on" mode acts only then)
+        ///   inEffect   notifications are muted right now, by the switch or by an automatic rule
+        ///   selected   the switch's profile (null if unreadable)
+        ///   ours       CleanSlate itself turned it on (and will switch it back off)
+        /// </summary>
+        public static Step Decide(string mode, bool grayJustOn, bool inEffect, string selected, bool ours)
+        {
+            if (ours || selected == null) return Step.None;
+            if (mode == Settings.DndTurnOn)
+                return grayJustOn && !inEffect ? Step.TurnOn : Step.None;
+            if (mode == Settings.DndKeepOff)
+                // Only an automatic rule (switch still off) is paused. If you switched it on yourself, it stays on.
+                return inEffect && string.Equals(selected, OffProfile, StringComparison.OrdinalIgnoreCase) ? Step.Dismiss : Step.None;
+            return Step.None;
+        }
+
         static readonly Guid ClsidQuietHoursSettings = new Guid("f53321fa-34f8-4b7f-b9a3-361877cb94cf");
 
         [ComImport, Guid("6bff4732-81ec-4ffb-ae67-b6c1bc29631f"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]

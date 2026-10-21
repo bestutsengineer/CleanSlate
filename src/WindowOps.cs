@@ -183,6 +183,33 @@ namespace CleanSlate
             return t.Length > 80 ? t.Substring(0, 77) + "..." : t;
         }
 
+        /// <summary>A short, friendly name for the app that owns a window, e.g. "Firefox" (for menus).</summary>
+        public static string AppName(IntPtr h)
+        {
+            // Store apps all live in ApplicationFrameHost; their window title is the app's name.
+            if (ClassOf(h) == "ApplicationFrameWindow") return Shorten(TitleOf(h), 40);
+            uint pid;
+            Native.GetWindowThreadProcessId(h, out pid);
+            try
+            {
+                using (Process p = Process.GetProcessById((int)pid))
+                {
+                    string description = null;
+                    try { description = p.MainModule.FileVersionInfo.FileDescription; } catch { }
+                    return Shorten(string.IsNullOrEmpty(description) ? p.ProcessName : description.Trim(), 40);
+                }
+            }
+            catch
+            {
+                return Shorten(TitleOf(h), 40);
+            }
+        }
+
+        static string Shorten(string s, int max)
+        {
+            return s.Length > max ? s.Substring(0, max - 3) + "..." : s;
+        }
+
         public static string Describe(IntPtr h)
         {
             uint pid;

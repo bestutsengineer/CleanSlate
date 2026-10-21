@@ -10,6 +10,8 @@ namespace CleanSlate
     /// </summary>
     internal sealed class OverlayWindow : NativeWindow
     {
+        const string NonRudeProperty = "NonRudeHWND";
+
         readonly App _app;
 
         public ScreenInfo Screen { get; private set; }
@@ -32,6 +34,10 @@ namespace CleanSlate
             cp.Width = screen.Bounds.Width;
             cp.Height = screen.Bounds.Height;
             CreateHandle(cp);
+            // Tell the shell this is not a full-screen app. Without it, Windows' automatic rule
+            // "turn on Do not disturb when using an app in full screen mode" fires for the gray.
+            // Must be set before the window is first shown; older Windows simply ignore it.
+            Native.SetProp(Handle, NonRudeProperty, new IntPtr(1));
             Place();
             Native.UpdateWindow(Handle);
         }
@@ -58,6 +64,7 @@ namespace CleanSlate
 
         public void Close()
         {
+            Native.RemoveProp(Handle, NonRudeProperty);
             DestroyHandle();
         }
 

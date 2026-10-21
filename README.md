@@ -2,7 +2,7 @@
 
 A small tray app for Windows 10/11. One click on its icon at the right end of the taskbar:
 
-1. **Closes every window on the taskbar, gracefully.** Each window gets the same request as clicking its **X** (or pressing Alt+F4). Nothing is killed, so apps can still ask "save changes?", and apps that minimize to the tray on close still do that.
+1. **Closes every window on the taskbar, gracefully** (or every window except the one you are working in). Each window gets the same request as clicking its **X** (or pressing Alt+F4). Nothing is killed, so apps can still ask "save changes?", and apps that minimize to the tray on close still do that.
 2. **Grays out your other screens.** Every screen except your focus screen is covered with a plain full-screen gray, taskbar included.
 
 The gray is only a window. CleanSlate never changes your wallpaper, taskbar or settings, so if CleanSlate is closed, crashes or is killed, the gray simply disappears and your screens are exactly as before.
@@ -37,8 +37,9 @@ Windows hides new tray icons behind the **^** arrow. The installer marks CleanSl
 | **Right-click** the tray icon | The menu below |
 | **Right-click** a gray screen | The same menu, handy when the screen with the tray is grayed |
 
-The menu:
+### The menu
 
+- **Close all except the current window + gray other screens**: the app shown on the right of this item stays open.
 - **Close all windows + gray other screens**
 - **Close all windows only**
 - **Gray other screens only**
@@ -51,9 +52,9 @@ The menu:
   - each connected display **by its name**, e.g. *DELL U2720Q*, *Built-in display*
 
   A chosen display is remembered by its hardware id (falling back to its name), so the choice survives rearranging, reconnecting and other setups. If it is not connected, the primary display is used and the menu says so. Changing the focus screen while the gray is on moves the gray immediately.
-- **Left-click action** ▸ one of the three actions above.
+- **Left-click action** ▸ any of the four actions above.
 - **Gray color** ▸ *Light gray* / *Medium gray* / *Dark gray* / *Custom…*
-- **Do not disturb while gray is on**: see below.
+- **Do not disturb while gray is on** ▸ *Turn it on* / *Keep it off* / *Leave it to Windows* (see below).
 - **Start with Windows**
 - **Keep a log**: off by default.
 - **Open log**
@@ -61,21 +62,29 @@ The menu:
 
 Every choice is saved immediately. Identical monitors are shown as *Name #1*, *Name #2* (left to right).
 
+### Close all except the current window
+
+"Current" is the window you were working in just before you clicked the tray icon (clicking the tray moves focus to the taskbar, so CleanSlate remembers the last real app window). Its app name is shown on the right of the menu item. Every other window on the taskbar is asked to close. If the current window is on a screen that turns gray, it is moved to the focus screen, so you keep working in it.
+
 ### Do not disturb
 
-With **Do not disturb while gray is on** ticked, Windows' Do not disturb is switched on when the gray goes on and back off when it goes off. CleanSlate is careful with it:
+| Choice | While the gray is on |
+|---|---|
+| **Turn it on** | Do not disturb is switched on, and switched back off when the gray goes off. If notifications are already muted (by you or an automatic rule), CleanSlate leaves them alone and does not switch anything off later. |
+| **Keep it off** | Notifications stay on. If one of Windows' automatic rules mutes them (a full-screen video or game, a schedule), CleanSlate pauses that rule exactly as switching Do not disturb off from the notification center does. Windows resumes the rule by itself when its condition ends (you leave full screen, the game closes) or at its next scheduled start. If you switch Do not disturb on yourself, CleanSlate respects that. |
+| **Leave it to Windows** (default) | CleanSlate does not touch Do not disturb. |
 
-- If notifications are already muted (you turned Do not disturb on, or an automatic rule did), CleanSlate leaves it alone and does not turn it off later.
-- If you change Do not disturb yourself while the gray is on, CleanSlate leaves your choice alone.
-- If CleanSlate is killed while it has Do not disturb on, it switches it back off the next time it starts.
+Either way, the gray itself never counts as a full-screen app: each gray window carries the shell's `NonRudeHWND` marker, so Windows' rule "When using an app in full screen mode" does not fire because of it. (Without the marker it does, even though the gray can never be the active window.)
+
+Safety: if you change Do not disturb yourself while the gray is on, CleanSlate leaves your choice alone. If CleanSlate is killed while it has Do not disturb switched on, it switches it back the next time it starts.
+
+When notifications are muted but not by CleanSlate, the menu says why: *(on now: a full-screen app is open)* or *(on now: set in Windows)*.
 
 Windows has no official API for Do not disturb; CleanSlate uses the interface the Settings app uses. If a future Windows changes it, the menu item shows *(not available)* and everything else keeps working.
 
-**Do not disturb is on although the option is off?** Then Windows turned it on itself. Its automatic rule *Settings → System → Notifications → Turn on do not disturb automatically → When using an app in full screen mode* reacts to full-screen videos, games and presentations. The menu item then shows *(on now: a full-screen app is open)* (or *(on now: set in Windows)* if it was switched on another way). CleanSlate's gray screens never count as a full-screen app: they can never become the active window.
-
 ### Windows on a gray screen
 
-- **Close all + gray:** windows that do not close (for example one asking "save changes?") get 3 seconds. If one is still there on a gray screen after that, it is moved to the focus screen so you can answer it.
+- **Close actions:** windows that do not close (for example one asking "save changes?") get 3 seconds. If one is still there on a gray screen after that, it is moved to the focus screen so you can answer it.
 - **Gray only:** windows on the grayed screens stay where they are, under the gray. The one you are working in, and any you switch to later (taskbar, Alt+Tab), move to the focus screen.
 - **New windows** that open on a gray screen are moved to the focus screen.
 
@@ -88,12 +97,14 @@ The running copy in the tray receives these, so they work from shortcuts, script
 ```
 CleanSlate.exe                       start it in the tray
 CleanSlate.exe --click               do the left-click action (removes the gray if it is on)
+CleanSlate.exe --close-except-current [screen]
+                                     close all windows except the current one, gray every screen except [screen]
 CleanSlate.exe --close-gray [screen] close all windows, gray every screen except [screen]
 CleanSlate.exe --close-only          close all windows
 CleanSlate.exe --gray-only [screen]  gray every screen except [screen]
 CleanSlate.exe --remove              remove the gray
 CleanSlate.exe --exit                quit CleanSlate
-CleanSlate.exe --list                print the windows that would be closed (try: CleanSlate.exe --list | more)
+CleanSlate.exe --list                print the displays and the windows that would be closed (try: CleanSlate.exe --list | more)
 
 [screen]: primary | active | a display name ("DELL", part of it is enough) | 1, 2, ... (left to right)
           default: the focus screen chosen in the menu; --list shows the display names
@@ -103,14 +114,24 @@ CleanSlate.exe --list                print the windows that would be closed (try
 
 ## Settings and log
 
-- `%APPDATA%\CleanSlate\settings.ini`: `ClickAction`, `FocusScreen` (+ `FocusDisplayName` / `FocusDisplayId`), `GrayColor`, `DoNotDisturb`, `Logging`. All changeable from the menu.
-- `%LOCALAPPDATA%\CleanSlate\log.txt`: what was closed, moved or skipped, and why. Only written while **Keep a log** is on (`Logging=on`); off by default.
+`%APPDATA%\CleanSlate\settings.ini`, all changeable from the menu:
+
+| Key | Values |
+|---|---|
+| `ClickAction` | `close-except-current`, `close-gray` (default), `close-only`, `gray-only` |
+| `FocusScreen` | `primary` (default), `active`, `display` (+ `FocusDisplayName`, `FocusDisplayId`) |
+| `GrayColor` | `#RRGGBB` (default `#808080`) |
+| `DoNotDisturb` | `on`, `keep-off`, `windows` (default; version 1.0's `off` reads as this) |
+| `Logging` | `on`, `off` (default) |
+
+`%LOCALAPPDATA%\CleanSlate\log.txt`: what was closed, moved or skipped, and why. Only written while **Keep a log** is on.
 
 ## How it works
 
 - **Which windows:** the same rule the taskbar uses. Visible top-level windows that are unowned and not tool windows, or that ask for a taskbar button. Windows on other virtual desktops and hidden store-app frames are left alone.
 - **Closing:** `WM_SYSCOMMAND / SC_CLOSE` is posted to each window, the message the X button and Alt+F4 produce.
-- **Gray:** one borderless, topmost window per covered screen, sized in physical pixels (the app is per-monitor DPI aware). It is re-raised whenever the foreground window changes and every 0.5 s, so the taskbar cannot pop up over it. It can never become the active window, so clicks on it do not steal keyboard focus and Windows never mistakes it for a full-screen app.
+- **Gray:** one borderless, topmost window per covered screen, sized in physical pixels (the app is per-monitor DPI aware). It is re-raised whenever the foreground window changes and every 0.5 s, so the taskbar cannot pop up over it. It can never become the active window, so clicks on it do not steal keyboard focus, and it is marked `NonRudeHWND` so the shell does not treat it as a full-screen app.
+- **Current window:** CleanSlate listens for foreground changes (`SetWinEventHook`) and remembers the last real app window.
 - **Menus:** native Windows menus, so they look and scale like the rest of Windows 11.
 - **Display names:** read from each monitor's EDID through the Windows display configuration API (`QueryDisplayConfig` / `DisplayConfigGetDeviceInfo`); laptop panels show as *Built-in display*.
 - **Screen changes:** plugging or unplugging a monitor refits the gray. With a single screen left, the gray turns off.
