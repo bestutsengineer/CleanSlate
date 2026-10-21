@@ -1,0 +1,9 @@
+# Normalize text to LF in the repository; Windows checkouts get CRLF where it matters.
+* text=auto
+*.cs text eol=crlf
+*.ps1 text eol=crlf
+*.manifest text eol=crlf
+# Git runs hooks with sh, which needs LF line endings.
+.githooks/* text eol=lf
+*.ico binary
+*.exe binary

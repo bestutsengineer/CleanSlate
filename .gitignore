@@ -1,0 +1,27 @@
+# Build output (the exe is published as a GitHub release asset, not committed)
+bin/
+obj/
+*.exe
+*.pdb
+
+# Runtime files CleanSlate writes outside the repo; never commit copies of them
+*.log
+log.txt
+settings.ini
+
+# Secrets and local environment
+.env
+.env.*
+*.pfx
+*.p12
+*.pem
+*.key
+
+# Editors and OS
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+Thumbs.db
+desktop.ini
